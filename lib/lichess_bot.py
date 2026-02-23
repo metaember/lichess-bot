@@ -45,6 +45,9 @@ from types import FrameType
 MULTIPROCESSING_LIST_TYPE: TypeAlias = MutableSequence[model.Challenge]
 POOL_TYPE: TypeAlias = Pool
 
+# Provenance tracking: game_id -> how the game was initiated
+_game_provenance: dict[str, str] = {}
+
 
 class PlayGameArgsType(TypedDict, total=False):
     """Type hint for `play_game_args`."""
@@ -403,7 +406,10 @@ def lichess_bot_main(li: lichess.Lichess,
                 active_games.discard(event["challenge"]["id"])
                 log_proc_count("Freed", active_games)
             elif event["type"] == "gameStart":
+                game_id = event["game"]["id"]
                 matchmaker.accepted_challenge(event)
+                if game_id not in _game_provenance:
+                    _game_provenance[game_id] = "matchmaking"
                 start_game(event,
                            pool,
                            play_game_args,
@@ -633,6 +639,7 @@ def handle_challenge(event: EventType, li: lichess.Lichess, challenge_queue: MUL
                                                       online_block_list)
     if is_supported:
         challenge_queue.append(chlng)
+        _game_provenance[chlng.id] = "incoming_challenge"
         sort_challenges(challenge_queue, challenge_config)
         time_window = challenge_config.recent_bot_challenge_age
         if time_window is not None:
@@ -677,6 +684,11 @@ def play_game(li: lichess.Lichess,
     abort_time = seconds(config.abort_time)
     game = model.Game(initial_state, user_profile["username"], li.baseUrl, abort_time)
 
+    from game_logger import get_game_logger
+    game_logger = get_game_logger()
+    provenance = _game_provenance.pop(game_id, "unknown")
+    game_logger.game_started(game, provenance)
+
     with engine_wrapper.create_engine(config, game) as engine:
         engine.get_opponent_info(game)
         logger.debug(f"The engine for game {game_id} has pid={engine.get_pid()}")
@@ -720,6 +732,7 @@ def play_game(li: lichess.Lichess,
                 elif u_type == "gameState":
                     game.state = upd
                     board = setup_board(game)
+                    game_logger.update_live_state(game, board)
                     takeback_field = game.state.get("btakeback") if game.is_white else game.state.get("wtakeback")
 
                     if not is_game_over(game) and is_engine_move(game, prior_game, board):
@@ -738,6 +751,12 @@ def play_game(li: lichess.Lichess,
                                          correspondence_move_time,
                                          engine_cfg,
                                          fake_think_time(config, board, game))
+                        # Log engine move + eval to SQLite
+                        if board.move_stack:
+                            last_move = board.move_stack[-1]
+                            commentary = engine.move_commentary[-1] if engine.move_commentary else None
+                            source = "book" if commentary and commentary.get("string", "").startswith("lichess-bot-source:") else "search"
+                            game_logger.move_played(game, board, last_move, commentary, source)
                         time.sleep(to_seconds(delay))
                     elif is_game_over(game):
                         tell_user_game_result(game, board)
@@ -761,9 +780,14 @@ def play_game(li: lichess.Lichess,
             except (HTTPError, ReadTimeout, RemoteDisconnected, ChunkedEncodingError, RequestsConnectionError,
                     StopIteration) as e:
                 stopped = isinstance(e, StopIteration)
-                stay_in_game = not stopped and (move_attempted or game_is_active(li, game.id))
+                if stopped:
+                    # Stream ended — could be a transient network issue, not necessarily game over.
+                    # Wait briefly to let Lichess API reflect the current game state before checking.
+                    time.sleep(1)
+                stay_in_game = move_attempted or game_is_active(li, game.id)
 
         pgn_record = try_get_pgn_game_record(li, config, game, board, engine)
+    game_logger.game_finished(game)
     final_queue_entries(control_queue, correspondence_queue, game, is_correspondence, pgn_record, pgn_queue)
     delete_takeback_record(game)
 
