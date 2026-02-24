@@ -61,6 +61,7 @@ class PlayGameArgsType(TypedDict, total=False):
     logging_queue: LOGGING_QUEUE_TYPE
     pgn_queue: PGN_QUEUE_TYPE
     game_id: str
+    provenance: str
 
 
 class VersioningType(TypedDict):
@@ -562,6 +563,7 @@ def start_game_thread(active_games: set[str], game_id: str, play_game_args: Play
     active_games.add(game_id)
     log_proc_count("Used", active_games)
     play_game_args["game_id"] = game_id
+    play_game_args["provenance"] = _game_provenance.pop(game_id, "unknown")
 
     def game_error_handler(error: BaseException) -> None:
         logger.exception("Game ended due to error:", exc_info=error)
@@ -658,7 +660,8 @@ def play_game(li: lichess.Lichess,
               challenge_queue: MULTIPROCESSING_LIST_TYPE,
               correspondence_queue: CORRESPONDENCE_QUEUE_TYPE,
               logging_queue: LOGGING_QUEUE_TYPE,
-              pgn_queue: PGN_QUEUE_TYPE) -> None:
+              pgn_queue: PGN_QUEUE_TYPE,
+              provenance: str = "unknown") -> None:
     """
     Play a game.
 
@@ -686,7 +689,6 @@ def play_game(li: lichess.Lichess,
 
     from game_logger import get_game_logger
     game_logger = get_game_logger()
-    provenance = _game_provenance.pop(game_id, "unknown")
     game_logger.game_started(game, provenance)
 
     with engine_wrapper.create_engine(config, game) as engine:
