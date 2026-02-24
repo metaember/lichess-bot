@@ -312,6 +312,11 @@ class Matchmaking:
         reason = event["challenge"]["declineReason"]
         logger.info(f"{opponent} declined {challenge}: {reason}")
         self.discard_challenge(challenge.id)
+
+        # No game was played, so don't enforce the full post-game timeout.
+        # Allow a new challenge after just the min_wait_time (60s).
+        self.last_game_ended_delay = Timer(seconds(0))
+
         if not challenge.from_self or self.challenge_filter == FilterType.NONE:
             return
 
