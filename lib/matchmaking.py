@@ -251,7 +251,8 @@ class Matchmaking:
 
     def game_done(self) -> None:
         """Reset the timer for when the last game ended, and prints the earliest that the next challenge will be created."""
-        self.last_game_ended_delay.reset()
+        # Recreate (not just reset) in case declined_challenge zeroed the duration.
+        self.last_game_ended_delay = Timer(minutes(self.matchmaking_cfg.challenge_timeout))
         self.show_earliest_challenge_time()
 
     def show_earliest_challenge_time(self) -> None:
