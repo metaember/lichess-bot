@@ -404,6 +404,7 @@ class TestFullLifecycle:
         final = conn.execute("SELECT * FROM games WHERE game_id = ?", (game.id,)).fetchone()
         assert final["status"] == "finished"
         assert final["result"] == "1-0"
+        assert final["moves_uci"] == "e2e4 e7e5 g1f3"
 
         # Live state cleaned up
         assert conn.execute("SELECT COUNT(*) FROM live_state").fetchone()[0] == 0

@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS games (
     result TEXT DEFAULT '*',
     termination TEXT,
     started_at TEXT,
-    finished_at TEXT
+    finished_at TEXT,
+    moves_uci TEXT
 );
 
 CREATE TABLE IF NOT EXISTS move_evals (
@@ -78,6 +79,11 @@ class GameLogger:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(SCHEMA)
+        # Migrate: add moves_uci column to games if missing (added after initial schema)
+        try:
+            self._conn.execute("ALTER TABLE games ADD COLUMN moves_uci TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
         self._conn.commit()
         logger.info(f"GameLogger initialized: {db_path}")
 
@@ -222,15 +228,22 @@ class GameLogger:
             termination = game.state.get("status")
             result = game.result()
 
+            # Grab moves_uci from live_state before deleting it
+            row = self._conn.execute(
+                "SELECT moves_uci FROM live_state WHERE game_id = ?", (game.id,)
+            ).fetchone()
+            moves_uci = row[0] if row else None
+
             self._conn.execute(
                 """UPDATE games
                    SET status = 'finished', result = ?, termination = ?,
-                       finished_at = ?
+                       finished_at = ?, moves_uci = ?
                    WHERE game_id = ?""",
                 (
                     result,
                     termination,
                     datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    moves_uci,
                     game.id,
                 ),
             )
