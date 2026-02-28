@@ -786,7 +786,19 @@ def play_game(li: lichess.Lichess,
                     # Stream ended — could be a transient network issue, not necessarily game over.
                     # Wait briefly to let Lichess API reflect the current game state before checking.
                     time.sleep(1)
-                stay_in_game = move_attempted or game_is_active(li, game.id)
+                    if game_is_active(li, game.id):
+                        # Game still running — reconnect the stream instead of looping on a dead iterator.
+                        try:
+                            response = li.get_game_stream(game.id)
+                            game_stream = response.iter_lines()
+                            stay_in_game = True
+                            continue
+                        except Exception:
+                            stay_in_game = False
+                    else:
+                        stay_in_game = False
+                else:
+                    stay_in_game = move_attempted or game_is_active(li, game.id)
 
         pgn_record = try_get_pgn_game_record(li, config, game, board, engine)
     game_logger.game_finished(game)
